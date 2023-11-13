@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 
 from model import TchAIkovskyModel
 from data import get_dataset, get_dataloader, generate_splits
+import tqdm
 
 
 def loss_fn(model, batch, key):
@@ -47,11 +48,13 @@ def main(args):
     optimiser = optax.adamw(learning_rate=1e-3)
     train_step, opt_state = create_train_step(model, optimiser)
 
-    for batch in train_loader:
-        key, subkey = jax.random.split(key)
-        batch = {k: v.numpy() for k, v in batch.items()}
-        model, opt_state, loss = train_step(model, opt_state, batch, subkey)
-        print(loss)
+    epochs = 5
+    for ei in range(epochs):
+        for batch in tqdm.tqdm(train_loader):
+            key, subkey = jax.random.split(key)
+            batch = {k: v.numpy() for k, v in batch.items()}
+            model, opt_state, loss = train_step(model, opt_state, batch, subkey)
+            print(loss)
 
 if __name__ == '__main__':
     parser = ArgumentParser()

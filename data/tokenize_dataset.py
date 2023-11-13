@@ -18,7 +18,10 @@ if __name__ == "__main__":
 
     data_augmentation_offsets = [2, 1, 1]
 
-    tokenizer.tokenize_midi_dataset(midi_paths, "tokenized_dataset_no_bpe", data_augment_offsets=data_augmentation_offsets, save_programs=False)
+    # TODO: add back data augmentation, currently crashes without it
+    # likely due to version mismatch
+    tokenizer.tokenize_midi_dataset(midi_paths, "tokenized_dataset_no_bpe", save_programs=False)
+    # tokenizer.tokenize_midi_dataset(midi_paths, "tokenized_dataset_no_bpe", data_augment_offsets=data_augmentation_offsets, save_programs=False)
 
     tokenizer.learn_bpe(
         vocab_size=10_000,
