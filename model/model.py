@@ -5,7 +5,8 @@ import jax
 import jax.numpy as jnp
 from jax.random import PRNGKey
 
-from .utils import make_causal_mask, make_attention_mask
+from .utils import make_attention_mask, make_causal_mask
+
 
 class DecoderLayer(eqx.Module):
     attn: eqx.Module
@@ -48,10 +49,12 @@ class DecoderLayer(eqx.Module):
         )
         self.norm2 = eqx.nn.LayerNorm(dim)
 
-    def __call__(self, x, mask, key = None):
+    def __call__(self, x, mask, key=None):
         attn_norm = jax.vmap(self.norm1)(x)
 
-        attn_output = self.attn(attn_norm, attn_norm, attn_norm, mask, key=key, inference=key is None)
+        attn_output = self.attn(
+            attn_norm, attn_norm, attn_norm, mask, key=key, inference=key is None
+        )
         fc_output = jax.vmap(self.fc)(jax.vmap(self.norm2)(x))
 
         return x + attn_output + fc_output
@@ -76,7 +79,7 @@ class Decoder(eqx.Module):
             for k in keys
         ]
 
-    def __call__(self, x, mask, key = None):
+    def __call__(self, x, mask, key=None):
         for layer in self.layers:
             key, subkey = jax.random.split(key) if (key is not None) else (None, None)
             x = layer(x, mask, subkey)
@@ -107,7 +110,9 @@ class TchAIkovskyModel(eqx.Module):
         )
 
         self.id_embeddings = eqx.nn.Embedding(vocab_size, dim, key=id_embeddings_key)
-        self.pos_embeddings = eqx.nn.Embedding(max_positions, dim, key=pos_embeddings_key)
+        self.pos_embeddings = eqx.nn.Embedding(
+            max_positions, dim, key=pos_embeddings_key
+        )
 
         self.decoder = Decoder(
             decoder_key, dim, num_heads, num_layers, head_dim=head_dim, dropout=dropout
@@ -116,11 +121,13 @@ class TchAIkovskyModel(eqx.Module):
         self.norm_out = eqx.nn.LayerNorm(dim)
         self.out_head = eqx.nn.Linear(dim, vocab_size, use_bias=True, key=out_key)
 
-    def __call__(self, input_ids, position_ids, mask, key = None):
+    def __call__(self, input_ids, position_ids, mask, key=None):
         causal_mask = make_causal_mask(input_ids)[0]
         mask = jnp.where(~mask, 0, causal_mask)
 
-        x = jax.vmap(self.id_embeddings)(input_ids) + jax.vmap(self.pos_embeddings)(position_ids)
+        x = jax.vmap(self.id_embeddings)(input_ids) + jax.vmap(self.pos_embeddings)(
+            position_ids
+        )
         x = self.decoder(x, mask, key)
 
         x = jax.vmap(self.norm_out)(x)
@@ -133,9 +140,7 @@ if __name__ == "__main__":
 
     x_key, model_key, key = jax.random.split(key, 3)
     x = jax.random.randint(x_key, (2, 8), 0, 10)
-    position_ids = jnp.expand_dims(jnp.arange(8, dtype=int), axis=0).repeat(
-        2, axis=0
-    )
+    position_ids = jnp.expand_dims(jnp.arange(8, dtype=int), axis=0).repeat(2, axis=0)
     mask = jnp.ones((2, 8, 8), dtype=bool)
     model = TchAIkovskyModel(model_key, 512, 8, 4, 10, 8, head_dim=64, dropout=0.1)
     model = jax.vmap(model, (0, 0, 0, None))
