@@ -6,10 +6,14 @@ import jax.numpy as jnp
 import optax
 import tqdm
 import wandb
+from pathlib import Path
+from datetime import datetime
+import json
 
 from data import generate_splits, get_dataloader, get_dataset
 from model import TchAIkovskyModel
 
+import orbax.checkpoint as ocp
 
 def prepare_batch(batch, key=None):
     input_ids = jnp.copy(batch["input_ids"][:, :-1])
@@ -61,7 +65,7 @@ def create_train_step(model, optimiser):
 
 
 def wandb_init(args):
-    return wandb.init(project="tchaikovsky", config=args)
+    return wandb.init(project="tchaikovsky", config=vars(args))
 
 
 PRINT_INTERVAL = 10
@@ -103,55 +107,72 @@ def main(args):
         drop_last=True,
     )
 
+    ckptr = ocp.AsyncCheckpointer(ocp.StandardCheckpointHandler())
+    checkpoint_root = Path('checkpoints')
+    exp_root = checkpoint_root / f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    exp_root.mkdir(parents=True)
+
+    with open(exp_root / 'config.json', 'w') as f:
+        json.dump(vars(args), f, indent=4)
+
     run = wandb_init(args)
     num_steps = 0
 
-    for ei in range(args.epochs):
-        pb = tqdm.tqdm(train_loader)
-        pb.set_description(f"[Epoch {ei+1}/{args.epochs}] TRAINING | Loss: ??????")
-        total_loss = 0.0
-        for i, batch in enumerate(pb):
-            key, subkey = jax.random.split(key)
-            batch = {k: v.numpy() for k, v in batch.items()}
-            model, opt_state, loss = train_step(model, opt_state, batch, subkey)
+    try:
+        for ei in range(args.epochs):
+            pb = tqdm.tqdm(train_loader)
+            pb.set_description(f"[Epoch {ei+1}/{args.epochs}] TRAINING | Loss: ??????")
+            total_loss = 0.0
+            for i, batch in enumerate(pb):
+                key, subkey = jax.random.split(key)
+                batch = {k: v.numpy() for k, v in batch.items()}
+                model, opt_state, loss = train_step(model, opt_state, batch, subkey)
 
-            num_steps += 1
-            total_loss += loss.item()
+                num_steps += 1
+                total_loss += loss.item()
 
-            if i > 0 and i % PRINT_INTERVAL == 0:
+                if i > 0 and i % PRINT_INTERVAL == 0:
+                    pb.set_description(
+                        f"[Epoch {ei+1}/{args.epochs}] TRAINING | Loss: {total_loss / PRINT_INTERVAL:.4f}"
+                    )
+
+                    wandb.log(
+                        {"train": {"loss": total_loss / PRINT_INTERVAL}}, step=num_steps
+                    )
+                    total_loss = 0.0
+
+            pb = tqdm.tqdm(train_loader)
+            total_val_loss = 0.0
+            total_val_accuracy = 0.0
+            for i, batch in enumerate(pb):
+                batch = {k: v.numpy() for k, v in batch.items()}
+                loss, accuracy = eval_step(model, batch)
+
+                total_val_loss += loss.item()
+                total_val_accuracy += accuracy.item()
+
                 pb.set_description(
-                    f"[Epoch {ei+1}/{args.epochs}] TRAINING | Loss: {total_loss / PRINT_INTERVAL:.4f}"
+                    f"[Epoch {ei+1}/{args.epochs}] VALIDATION | Loss: {total_val_loss / (i+1):.4f}, Accuracy: {100*total_val_accuracy / (i+1):.2f}"
                 )
 
-                wandb.log(
-                    {"train": {"loss": total_loss / PRINT_INTERVAL}}, step=num_steps
-                )
-                total_loss = 0.0
-
-        pb = tqdm.tqdm(train_loader)
-        total_val_loss = 0.0
-        total_val_accuracy = 0.0
-        for i, batch in enumerate(pb):
-            batch = {k: v.numpy() for k, v in batch.items()}
-            loss, accuracy = eval_step(model, batch)
-
-            total_val_loss += loss.item()
-            total_val_accuracy += accuracy.item()
-
-            pb.set_description(
-                f"[Epoch {ei+1}/{args.epochs}] VALIDATION | Loss: {total_val_loss / (i+1):.4f}, Accuracy: {100*total_val_accuracy / (i+1):.2f}"
+            wandb.log(
+                {
+                    "val": {
+                        "loss": total_val_loss / (i+1),
+                        "accuracy": 100 * total_val_accuracy / (i+1),
+                    }
+                },
+                step=num_steps,
             )
 
-        wandb.log(
-            {
-                "val": {
-                    "loss": total_val_loss / (i+1),
-                    "accuracy": 100 * total_val_accuracy / (i+1),
-                }
-            },
-            step=num_steps,
-        )
+            ckptr.save((exp_root / f"checkpoint-{ei+1:03}.eqx").resolve(), eqx.filter(model, eqx.is_inexact_array))
+    except BaseException as e:
+        print("Caught exception.. waiting for checkpointer to finish..")
+        ckptr.wait_until_finished()
+        raise e
 
+    print("Training complete.. waiting for checkpointer to finish")
+    ckptr.wait_until_finished()
 
 if __name__ == "__main__":
     parser = ArgumentParser()
