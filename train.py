@@ -42,6 +42,7 @@ def loss_fn(model, batch, labels, keys=None):
 def create_train_step(model, optimiser):
     opt_state = optimiser.init(eqx.filter(model, eqx.is_inexact_array))
 
+    @eqx.debug.assert_max_traces(max_traces=1)
     @eqx.filter_jit
     def train_step(model, opt_state, batch, key):
         batch, labels, keys = prepare_batch(batch, key)
@@ -54,6 +55,7 @@ def create_train_step(model, optimiser):
 
         return model, opt_state, loss
 
+    @eqx.debug.assert_max_traces(max_traces=1)
     @eqx.filter_jit
     def eval_step(model, batch):
         batch, labels, _ = prepare_batch(batch)
@@ -84,7 +86,13 @@ def main(args):
         head_dim=args.head_dim,
         dropout=args.dropout,
         key=model_key,
+        dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
+        output_dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
     )
+
+    if args.use_bf16:
+        # map all params to bf16
+        model = jax.tree_util.tree_map(lambda p: p.astype(jnp.bfloat16) if eqx.is_inexact_array(p) else p, model)
 
     optimiser = optax.adamw(learning_rate=args.learning_rate)
     train_step, eval_step, opt_state = create_train_step(model, optimiser)
@@ -188,11 +196,13 @@ if __name__ == "__main__":
     parser.add_argument("--val_proportion", type=float, default=0.1)
 
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=5)
 
     parser.add_argument("--max_sequence_length", type=int, default=1024)
     parser.add_argument("--min_sequence_length", type=int, default=128)
+
+    parser.add_argument("--use_bf16", action="store_true")
     args = parser.parse_args()
 
     main(args)

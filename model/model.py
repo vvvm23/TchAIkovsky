@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from jax.random import PRNGKey
 
 from .utils import make_attention_mask, make_causal_mask
+from .attention import MultiheadAttention
 
 
 class DecoderLayer(eqx.Module):
@@ -13,6 +14,7 @@ class DecoderLayer(eqx.Module):
     fc: eqx.Module
     norm1: eqx.Module
     norm2: eqx.Module
+    dtype: jnp.dtype = eqx.field(static=True)
 
     def __init__(
         self,
@@ -22,20 +24,23 @@ class DecoderLayer(eqx.Module):
         mult: int = 4,
         head_dim: Optional[int] = None,
         dropout: float = 0.0,
+        dtype: jnp.dtype = jnp.float32
     ):
+        self.dtype = dtype
         attn_key, fc_key = jax.random.split(key)
 
         if head_dim is None:
             assert dim % num_heads == 0
             head_dim = dim // num_heads
 
-        self.attn = eqx.nn.MultiheadAttention(
+        self.attn = MultiheadAttention(
             num_heads=num_heads,
             query_size=head_dim * num_heads,
             output_size=dim,
             use_output_bias=True,
             dropout_p=dropout,
             key=attn_key,
+            dtype=self.dtype
         )
         self.norm1 = eqx.nn.LayerNorm(dim)
 
@@ -50,12 +55,16 @@ class DecoderLayer(eqx.Module):
         self.norm2 = eqx.nn.LayerNorm(dim)
 
     def __call__(self, x, mask, key=None):
+        x = x.astype(self.dtype)
         attn_norm = jax.vmap(self.norm1)(x)
+        assert attn_norm.dtype == jnp.bfloat16
 
         attn_output = self.attn(
             attn_norm, attn_norm, attn_norm, mask, key=key, inference=key is None
         )
+        assert attn_output.dtype == jnp.bfloat16
         fc_output = jax.vmap(self.fc)(jax.vmap(self.norm2)(x))
+        assert fc_output.dtype == jnp.bfloat16
 
         return x + attn_output + fc_output
 
@@ -71,11 +80,12 @@ class Decoder(eqx.Module):
         num_layers: int,
         head_dim: Optional[int] = None,
         dropout: float = 0.0,
+        dtype: jnp.dtype = jnp.float32,
     ):
         keys = jax.random.split(key, num_layers)
 
         self.layers = [
-            DecoderLayer(k, dim, num_heads, head_dim=head_dim, dropout=dropout)
+            DecoderLayer(k, dim, num_heads, head_dim=head_dim, dropout=dropout, dtype=dtype)
             for k in keys
         ]
 
@@ -94,6 +104,9 @@ class TchAIkovskyModel(eqx.Module):
     norm_out: eqx.Module
     out_head: eqx.Module
 
+    dtype: jnp.dtype = eqx.field(static=True)
+    output_dtype: jnp.dtype = eqx.field(static=True)
+
     def __init__(
         self,
         dim: int,
@@ -104,7 +117,11 @@ class TchAIkovskyModel(eqx.Module):
         head_dim: Optional[int] = None,
         dropout: float = 0.0,
         key: PRNGKey = None,
+        dtype: jnp.dtype = jnp.float32,
+        output_dtype: jnp.dtype = jnp.float32,
     ):
+        self.dtype = dtype
+        self.output_dtype = output_dtype
         id_embeddings_key, pos_embeddings_key, decoder_key, out_key = jax.random.split(
             key, 4
         )
@@ -115,7 +132,7 @@ class TchAIkovskyModel(eqx.Module):
         )
 
         self.decoder = Decoder(
-            decoder_key, dim, num_heads, num_layers, head_dim=head_dim, dropout=dropout
+            decoder_key, dim, num_heads, num_layers, head_dim=head_dim, dropout=dropout, dtype=dtype
         )
 
         self.norm_out = eqx.nn.LayerNorm(dim)
@@ -130,8 +147,10 @@ class TchAIkovskyModel(eqx.Module):
         )
         x = self.decoder(x, mask, key)
 
+        x = x.astype(self.dtype) # TODO: check if needed
         x = jax.vmap(self.norm_out)(x)
         logits = jax.vmap(self.out_head)(x)
+        logits = logits.astype(self.output_dtype)
         return logits
 
 
