@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import optax
 import tqdm
+import wandb
 
 from data import generate_splits, get_dataloader, get_dataset
 from model import TchAIkovskyModel
@@ -59,6 +60,10 @@ def create_train_step(model, optimiser):
     return train_step, eval_step, opt_state
 
 
+def wandb_init(args):
+    return wandb.init(project="tchaikovsky", config=args)
+
+
 PRINT_INTERVAL = 10
 
 
@@ -98,6 +103,9 @@ def main(args):
         drop_last=True,
     )
 
+    run = wandb_init(args)
+    num_steps = 0
+
     for ei in range(args.epochs):
         pb = tqdm.tqdm(train_loader)
         pb.set_description(f"[Epoch {ei+1}/{args.epochs}] TRAINING | Loss: ??????")
@@ -107,11 +115,16 @@ def main(args):
             batch = {k: v.numpy() for k, v in batch.items()}
             model, opt_state, loss = train_step(model, opt_state, batch, subkey)
 
+            num_steps += 1
             total_loss += loss.item()
 
             if i > 0 and i % PRINT_INTERVAL == 0:
                 pb.set_description(
                     f"[Epoch {ei+1}/{args.epochs}] TRAINING | Loss: {total_loss / PRINT_INTERVAL:.4f}"
+                )
+
+                wandb.log(
+                    {"train": {"loss": total_loss / PRINT_INTERVAL}}, step=num_steps
                 )
                 total_loss = 0.0
 
@@ -128,6 +141,16 @@ def main(args):
             pb.set_description(
                 f"[Epoch {ei+1}/{args.epochs}] VALIDATION | Loss: {total_val_loss / (i+1):.4f}, Accuracy: {100*total_val_accuracy / (i+1):.2f}"
             )
+
+        wandb.log(
+            {
+                "val": {
+                    "loss": total_val_loss / (i+1),
+                    "accuracy": 100 * total_val_accuracy / (i+1),
+                }
+            },
+            step=num_steps,
+        )
 
 
 if __name__ == "__main__":
