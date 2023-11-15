@@ -9,6 +9,7 @@ import wandb
 from pathlib import Path
 from datetime import datetime
 import json
+from loguru import logger
 
 from data import generate_splits, get_dataloader, get_dataset
 from model import TchAIkovskyModel
@@ -42,7 +43,7 @@ def loss_fn(model, batch, labels, keys=None):
 def create_train_step(model, optimiser):
     opt_state = optimiser.init(eqx.filter(model, eqx.is_inexact_array))
 
-    @eqx.debug.assert_max_traces(max_traces=1)
+    # @eqx.debug.assert_max_traces(max_traces=1)
     @eqx.filter_jit
     def train_step(model, opt_state, batch, key):
         batch, labels, keys = prepare_batch(batch, key)
@@ -55,7 +56,7 @@ def create_train_step(model, optimiser):
 
         return model, opt_state, loss
 
-    @eqx.debug.assert_max_traces(max_traces=1)
+    # @eqx.debug.assert_max_traces(max_traces=1)
     @eqx.filter_jit
     def eval_step(model, batch):
         batch, labels, _ = prepare_batch(batch)
@@ -67,16 +68,19 @@ def create_train_step(model, optimiser):
 
 
 def wandb_init(args):
-    return wandb.init(project="tchaikovsky", config=vars(args))
+    return wandb.init(project="tchaikovsky", config=vars(args), mode=None if args.wandb else "disabled")
 
 
 PRINT_INTERVAL = 10
 
 
 def main(args):
+    logger.info("Beginning training script.")
     key = jax.random.PRNGKey(args.seed)
+    logger.info(f"Using PRNG key {args.seed}")
 
     model_key, key = jax.random.split(key)
+    logger.info("Initialising model.")
     model = TchAIkovskyModel(
         dim=args.dim,
         num_heads=args.heads,
@@ -87,16 +91,23 @@ def main(args):
         dropout=args.dropout,
         key=model_key,
         dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
-        output_dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
+        # output_dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
     )
+
+    num_parameters = jax.tree_util.tree_reduce(lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0)
+    logger.info(f"Model has {num_parameters:,} parameters.")
 
     if args.use_bf16:
         # map all params to bf16
+        logger.info("Training with bfloat16.")
         model = jax.tree_util.tree_map(lambda p: p.astype(jnp.bfloat16) if eqx.is_inexact_array(p) else p, model)
+    
 
+    logger.info("Initialising optimiser.")
     optimiser = optax.adamw(learning_rate=args.learning_rate)
     train_step, eval_step, opt_state = create_train_step(model, optimiser)
 
+    logger.info("Initialising dataset.")
     dataset = get_dataset(
         min_sequence_length=args.min_sequence_length,
         max_sequence_length=args.max_sequence_length,
@@ -105,6 +116,7 @@ def main(args):
     val_dataset, train_dataset = generate_splits(
         dataset, (args.val_proportion, 1.0 - args.val_proportion)
     )
+    logger.info(f"Training set size: {len(train_dataset):,} Validation set size: {len(val_dataset):,}")
 
     train_loader = get_dataloader(
         train_dataset,
@@ -119,10 +131,13 @@ def main(args):
     checkpoint_root = Path('checkpoints')
     exp_root = checkpoint_root / f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     exp_root.mkdir(parents=True)
+    logger.info("Saving checkpoints and config to {exp_root}")
 
     with open(exp_root / 'config.json', 'w') as f:
         json.dump(vars(args), f, indent=4)
 
+    if args.wandb:
+        logger.info("Initialising W&B")
     run = wandb_init(args)
     num_steps = 0
 
@@ -173,13 +188,14 @@ def main(args):
                 step=num_steps,
             )
 
+            logger.info(f"Saving checkpoint for epoch {ei+1}")
             ckptr.save((exp_root / f"checkpoint-{ei+1:03}.eqx").resolve(), eqx.filter(model, eqx.is_inexact_array))
     except BaseException as e:
         print("Caught exception.. waiting for checkpointer to finish..")
         ckptr.wait_until_finished()
         raise e
 
-    print("Training complete.. waiting for checkpointer to finish")
+    logger.info("Training complete.. waiting for checkpointer to finish")
     ckptr.wait_until_finished()
 
 if __name__ == "__main__":
@@ -195,7 +211,7 @@ if __name__ == "__main__":
     parser.add_argument("--subset_proportion", type=float, default=1.0)
     parser.add_argument("--val_proportion", type=float, default=0.1)
 
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=5)
 
@@ -203,6 +219,7 @@ if __name__ == "__main__":
     parser.add_argument("--min_sequence_length", type=int, default=128)
 
     parser.add_argument("--use_bf16", action="store_true")
+    parser.add_argument("--wandb", action="store_true")
     args = parser.parse_args()
 
     main(args)
