@@ -9,9 +9,9 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 import tqdm
-import wandb
 from loguru import logger
 
+import wandb
 from data import generate_splits, get_dataloader, get_dataset
 from model import TchAIkovskyModel
 from utils import seed_others
@@ -54,7 +54,7 @@ def create_train_step(model, optimiser):
         batch, labels, keys = prepare_batch(batch, key)
         (loss, _), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(model, batch, labels, keys)
 
-        updates, opt_state = optimiser.update(grads, opt_state, model)
+        updates, opt_state = optimiser.update(grads, opt_state, eqx.filter(model, eqx.is_inexact_array))
         model = eqx.apply_updates(model, updates)
 
         return model, opt_state, loss
@@ -187,8 +187,7 @@ def main(args):
         ),
     )
 
-    # TODO: fix bug when adding multi step
-    # optimiser = optax.MultiSteps(optimiser, args.batch_size // args.micro_batch_size)
+    optimiser = optax.MultiSteps(optimiser, args.batch_size // args.micro_batch_size)
     train_step, eval_step, opt_state = create_train_step(model, optimiser)
 
     ckptr = ocp.AsyncCheckpointer(ocp.StandardCheckpointHandler())
