@@ -1,20 +1,20 @@
+import json
 from argparse import ArgumentParser
+from datetime import datetime
+from pathlib import Path
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
+import orbax.checkpoint as ocp
 import tqdm
-import wandb
-from pathlib import Path
-from datetime import datetime
-import json
 from loguru import logger
 
+import wandb
 from data import generate_splits, get_dataloader, get_dataset
 from model import TchAIkovskyModel
 
-import orbax.checkpoint as ocp
 
 def prepare_batch(batch, key=None):
     input_ids = jnp.copy(batch["input_ids"][:, :-1])
@@ -68,7 +68,11 @@ def create_train_step(model, optimiser):
 
 
 def wandb_init(args):
-    return wandb.init(project="tchaikovsky", config=vars(args), mode=None if args.wandb else "disabled")
+    return wandb.init(
+        project="tchaikovsky",
+        config=vars(args),
+        mode=None if args.wandb else "disabled",
+    )
 
 
 PRINT_INTERVAL = 10
@@ -94,18 +98,17 @@ def main(args):
         # output_dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
     )
 
-    num_parameters = jax.tree_util.tree_reduce(lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0)
+    num_parameters = jax.tree_util.tree_reduce(
+        lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0
+    )
     logger.info(f"Model has {num_parameters:,} parameters.")
 
     if args.use_bf16:
         # map all params to bf16
         logger.info("Training with bfloat16.")
-        model = jax.tree_util.tree_map(lambda p: p.astype(jnp.bfloat16) if eqx.is_inexact_array(p) else p, model)
-    
-
-    logger.info("Initialising optimiser.")
-    optimiser = optax.adamw(learning_rate=args.learning_rate)
-    train_step, eval_step, opt_state = create_train_step(model, optimiser)
+        model = jax.tree_util.tree_map(
+            lambda p: p.astype(jnp.bfloat16) if eqx.is_inexact_array(p) else p, model
+        )
 
     logger.info("Initialising dataset.")
     dataset = get_dataset(
@@ -116,7 +119,9 @@ def main(args):
     val_dataset, train_dataset = generate_splits(
         dataset, (args.val_proportion, 1.0 - args.val_proportion)
     )
-    logger.info(f"Training set size: {len(train_dataset):,} Validation set size: {len(val_dataset):,}")
+    logger.info(
+        f"Training set size: {len(train_dataset):,} Validation set size: {len(val_dataset):,}"
+    )
 
     train_loader = get_dataloader(
         train_dataset,
@@ -127,13 +132,56 @@ def main(args):
         drop_last=True,
     )
 
+    val_loader = get_dataloader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=False,
+        drop_last=True,
+    )
+
+    # TODO: add weight decay per parameter https://github.com/patrick-kidger/equinox/issues/79#issuecomment-1117055584
+    logger.info("Initialising optimiser.")
+    # optimiser = optax.adamw(learning_rate=args.learning_rate)
+    lr = args.learning_rate
+    if args.use_lr_scheduler:
+        WARMUP_START_LR = 1e-7
+        logger.info("Using learning rate scheduler")
+        steps = args.epochs * len(train_loader)
+        warmup_steps = int(steps * args.warmup_proportion)
+        logger.info(f"{WARMUP_START_LR} -> {lr} (for {warmup_steps:,} steps)")
+        logger.info(
+            f"{lr} -> {args.end_learning_rate} (for {steps - warmup_steps:,} steps)"
+        )
+        lr = optax.join_schedules(
+            [
+                optax.linear_schedule(
+                    WARMUP_START_LR,
+                    lr,
+                    warmup_steps,
+                ),
+                optax.linear_schedule(
+                    lr,
+                    args.end_learning_rate,
+                    steps - warmup_steps,
+                ),
+            ],
+            [warmup_steps],
+        )
+    optimiser = optax.chain(
+        optax.clip_by_global_norm(args.global_norm),
+        optax.adamw(learning_rate=lr, weight_decay=args.weight_decay),
+    )
+    train_step, eval_step, opt_state = create_train_step(model, optimiser)
+
     ckptr = ocp.AsyncCheckpointer(ocp.StandardCheckpointHandler())
-    checkpoint_root = Path('checkpoints')
+    checkpoint_root = Path("checkpoints")
     exp_root = checkpoint_root / f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     exp_root.mkdir(parents=True)
     logger.info("Saving checkpoints and config to {exp_root}")
 
-    with open(exp_root / 'config.json', 'w') as f:
+    with open(exp_root / "config.json", "w") as f:
         json.dump(vars(args), f, indent=4)
 
     if args.wandb:
@@ -164,7 +212,7 @@ def main(args):
                     )
                     total_loss = 0.0
 
-            pb = tqdm.tqdm(train_loader)
+            pb = tqdm.tqdm(val_loader)
             total_val_loss = 0.0
             total_val_accuracy = 0.0
             for i, batch in enumerate(pb):
@@ -181,22 +229,26 @@ def main(args):
             wandb.log(
                 {
                     "val": {
-                        "loss": total_val_loss / (i+1),
-                        "accuracy": 100 * total_val_accuracy / (i+1),
+                        "loss": total_val_loss / (i + 1),
+                        "accuracy": 100 * total_val_accuracy / (i + 1),
                     }
                 },
                 step=num_steps,
             )
 
             logger.info(f"Saving checkpoint for epoch {ei+1}")
-            ckptr.save((exp_root / f"checkpoint-{ei+1:03}.eqx").resolve(), eqx.filter(model, eqx.is_inexact_array))
+            ckptr.save(
+                (exp_root / f"checkpoint-{ei+1:03}.eqx").resolve(),
+                eqx.filter(model, eqx.is_inexact_array),
+            )
     except BaseException as e:
-        print("Caught exception.. waiting for checkpointer to finish..")
+        logger.warning("Caught exception.. waiting for checkpointer to finish..")
         ckptr.wait_until_finished()
         raise e
 
     logger.info("Training complete.. waiting for checkpointer to finish")
     ckptr.wait_until_finished()
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -207,16 +259,21 @@ if __name__ == "__main__":
     parser.add_argument("--vocab_size", type=int, default=10_000)
     parser.add_argument("--head_dim", type=int, default=64)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--use_lr_scheduler", action="store_true")
     parser.add_argument("--learning_rate", type=float, default=4e-4)
+    parser.add_argument("--end_learning_rate", type=float, default=1e-6)
+    parser.add_argument("--warmup_proportion", type=float, default=0.05)
+    parser.add_argument("--global_norm", type=float, default=1.0)
+    parser.add_argument("--weight_decay", type=float, default=0.01)
+
     parser.add_argument("--subset_proportion", type=float, default=1.0)
     parser.add_argument("--val_proportion", type=float, default=0.1)
+    parser.add_argument("--max_sequence_length", type=int, default=1024)
+    parser.add_argument("--min_sequence_length", type=int, default=128)
 
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=5)
-
-    parser.add_argument("--max_sequence_length", type=int, default=1024)
-    parser.add_argument("--min_sequence_length", type=int, default=128)
 
     parser.add_argument("--use_bf16", action="store_true")
     parser.add_argument("--wandb", action="store_true")
