@@ -9,9 +9,9 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 import tqdm
+import wandb
 from loguru import logger
 
-import wandb
 from data import generate_splits, get_dataloader, get_dataset
 from model import TchAIkovskyModel
 
@@ -21,9 +21,7 @@ def prepare_batch(batch, key=None):
     labels = jnp.copy(batch["input_ids"][:, 1:])
 
     labels = jnp.where(labels == 0, -100, labels)
-    position_ids = jnp.expand_dims(jnp.arange(labels.shape[-1]), 0).repeat(
-        labels.shape[0], 0
-    )
+    position_ids = jnp.expand_dims(jnp.arange(labels.shape[-1]), 0).repeat(labels.shape[0], 0)
     mask = jnp.asarray(batch["attention_mask"][:, :-1], dtype=bool)
 
     keys = jax.random.split(key, input_ids.shape[0]) if key is not None else None
@@ -53,9 +51,7 @@ def create_train_step(model, optimiser):
     @eqx.filter_jit
     def train_step(model, opt_state, batch, key):
         batch, labels, keys = prepare_batch(batch, key)
-        (loss, _), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
-            model, batch, labels, keys
-        )
+        (loss, _), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(model, batch, labels, keys)
 
         updates, opt_state = optimiser.update(grads, opt_state, model)
         model = eqx.apply_updates(model, updates)
@@ -106,20 +102,15 @@ def main(args):
         dropout=args.dropout,
         key=model_key,
         dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
-        # output_dtype=jnp.bfloat16 if args.use_bf16 else jnp.float32,
     )
 
-    num_parameters = jax.tree_util.tree_reduce(
-        lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0
-    )
+    num_parameters = jax.tree_util.tree_reduce(lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0)
     logger.info(f"Model has {num_parameters:,} parameters.")
 
     if args.use_bf16:
         # map all params to bf16
         logger.info("Training with bfloat16.")
-        model = jax.tree_util.tree_map(
-            lambda p: p.astype(jnp.bfloat16) if eqx.is_inexact_array(p) else p, model
-        )
+        model = jax.tree_util.tree_map(lambda p: p.astype(jnp.bfloat16) if eqx.is_inexact_array(p) else p, model)
 
     logger.info("Initialising dataset.")
     dataset = get_dataset(
@@ -127,12 +118,8 @@ def main(args):
         max_sequence_length=args.max_sequence_length,
         subset=args.subset_proportion,
     )
-    val_dataset, train_dataset = generate_splits(
-        dataset, (args.val_proportion, 1.0 - args.val_proportion)
-    )
-    logger.info(
-        f"Training set size: {len(train_dataset):,} Validation set size: {len(val_dataset):,}"
-    )
+    val_dataset, train_dataset = generate_splits(dataset, (args.val_proportion, 1.0 - args.val_proportion))
+    logger.info(f"Training set size: {len(train_dataset):,} Validation set size: {len(val_dataset):,}")
 
     train_loader = get_dataloader(
         train_dataset,
@@ -161,9 +148,7 @@ def main(args):
         steps = args.epochs * len(train_dataset) // args.batch_size
         warmup_steps = int(steps * args.warmup_proportion)
         logger.info(f"{WARMUP_START_LR} -> {lr} (for {warmup_steps:,} steps)")
-        logger.info(
-            f"{lr} -> {args.end_learning_rate} (for {steps - warmup_steps:,} steps)"
-        )
+        logger.info(f"{lr} -> {args.end_learning_rate} (for {steps - warmup_steps:,} steps)")
         lr = optax.join_schedules(
             [
                 optax.linear_schedule(
@@ -181,20 +166,12 @@ def main(args):
         )
 
     model = [model]
-    decay_spec = jax.tree_map(
-        lambda _: "no_decay", eqx.filter(model, eqx.is_inexact_array)
-    )
-    is_decay_weight = lambda p: hasattr(p, "weight") and not hasattr(
-        p, "num_embeddings"
-    )
+    decay_spec = jax.tree_map(lambda _: "no_decay", eqx.filter(model, eqx.is_inexact_array))
+    is_decay_weight = lambda p: hasattr(p, "weight") and not hasattr(p, "num_embeddings")
     where_decay_weight = lambda m: tuple(
-        p.weight
-        for p in jax.tree_util.tree_leaves(m, is_leaf=is_decay_weight)
-        if is_decay_weight(p)
+        p.weight for p in jax.tree_util.tree_leaves(m, is_leaf=is_decay_weight) if is_decay_weight(p)
     )
-    decay_spec = eqx.tree_at(
-        where_decay_weight, decay_spec, replace_fn=lambda _: "decay"
-    )
+    decay_spec = eqx.tree_at(where_decay_weight, decay_spec, replace_fn=lambda _: "decay")
 
     optimiser = optax.chain(
         optax.clip_by_global_norm(args.global_norm),
@@ -244,9 +221,7 @@ def main(args):
                         f"[Epoch {ei+1}/{args.epochs}] TRAINING | Loss: {total_loss / PRINT_INTERVAL:.4f}"
                     )
 
-                    wandb.log(
-                        {"train": {"loss": total_loss / PRINT_INTERVAL}}, step=num_steps
-                    )
+                    wandb.log({"train": {"loss": total_loss / PRINT_INTERVAL}}, step=num_steps)
                     total_loss = 0.0
 
             pb = tqdm.tqdm(val_loader)

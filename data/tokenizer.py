@@ -17,5 +17,5 @@ def get_tokenizer(config: TokenizerConfig):
     return REMI(config)
 
 
-def get_pretrained_tokenizer():
-    return miditok.MIDITokenizer.from_pretrained("tokenizer.json")
+def get_pretrained_tokenizer(path: str = "tokenizer.json"):
+    return miditok.MIDITokenizer.from_pretrained(path)
