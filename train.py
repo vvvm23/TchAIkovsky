@@ -32,9 +32,9 @@ def prepare_batch(batch, key=None):
 
 def loss_fn(model, batch, labels, keys=None):
     if keys is None:
-        logits = jax.vmap(model)(**batch)
+        logits = jax.vmap(model[0])(**batch)
     else:
-        logits = jax.vmap(model)(**batch, key=keys)
+        logits = jax.vmap(model[0])(**batch, key=keys)
 
     num_tokens = (labels != -100).sum()
     accuracy = jnp.argmax(logits, axis=-1) == labels
@@ -152,7 +152,7 @@ def main(args):
     # optimiser = optax.adamw(learning_rate=args.learning_rate)
     lr = args.learning_rate
     if args.use_lr_scheduler:
-        WARMUP_START_LR = 1e-7
+        WARMUP_START_LR = 1e-9
         logger.info("Using learning rate scheduler")
         steps = args.epochs * len(train_loader)
         warmup_steps = int(steps * args.warmup_proportion)
@@ -175,9 +175,33 @@ def main(args):
             ],
             [warmup_steps],
         )
+
+    model = [model]
+    decay_spec = jax.tree_map(
+        lambda _: "no_decay", eqx.filter(model, eqx.is_inexact_array)
+    )
+    is_decay_weight = lambda p: hasattr(p, "weight") and not hasattr(
+        p, "num_embeddings"
+    )
+    where_decay_weight = lambda m: tuple(
+        p.weight
+        for p in jax.tree_leaves(m, is_leaf=is_decay_weight)
+        if is_decay_weight(p)
+    )
+    decay_spec = eqx.tree_at(
+        where_decay_weight, decay_spec, replace_fn=lambda _: "decay"
+    )
+
     optimiser = optax.chain(
         optax.clip_by_global_norm(args.global_norm),
-        optax.adamw(learning_rate=lr, weight_decay=args.weight_decay),
+        # optax.adamw(learning_rate=lr, weight_decay=args.weight_decay),
+        optax.multi_transform(
+            {
+                "decay": optax.adamw(learning_rate=lr, weight_decay=args.weight_decay),
+                "no_decay": optax.adamw(learning_rate=lr, weight_decay=0.0),
+            },
+            decay_spec,
+        ),
     )
     train_step, eval_step, opt_state = create_train_step(model, optimiser)
 
