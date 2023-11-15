@@ -12,6 +12,7 @@ from loguru import logger
 
 from data.tokenizer import get_pretrained_tokenizer
 from model import TchAIkovskyModel
+from utils import seed_others
 
 
 def load_config(config_path):
@@ -54,6 +55,7 @@ def main(args):
     logger.info("Beginning generation script.")
     key = jax.random.PRNGKey(args.seed)
     logger.info(f"Using PRNG key {args.seed}")
+    seed_others(args.seed)
 
     config = load_config(args.config)
 

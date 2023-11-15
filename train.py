@@ -14,6 +14,7 @@ from loguru import logger
 
 from data import generate_splits, get_dataloader, get_dataset
 from model import TchAIkovskyModel
+from utils import seed_others
 
 
 def prepare_batch(batch, key=None):
@@ -83,6 +84,7 @@ PRINT_INTERVAL = 10
 def main(args):
     logger.info("Beginning training script.")
     key = jax.random.PRNGKey(args.seed)
+    seed_others(args.seed)
     logger.info(f"Using PRNG key {args.seed}")
 
     if args.micro_batch_size is None:

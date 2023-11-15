@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Tuple
 
 import torch
-from datasets import load_dataset
 from miditok.pytorch_data.collators import DataCollator
 from miditok.pytorch_data.datasets import DatasetTok
 
@@ -39,6 +38,4 @@ def generate_splits(dataset, splits: Tuple[float, float]):
 
 def get_dataloader(dataset, **dataloader_kwargs):
     collator = DataCollator(pad_token_id=0, shift_labels=False)
-    return torch.utils.data.DataLoader(
-        dataset, collate_fn=collator, **dataloader_kwargs
-    )
+    return torch.utils.data.DataLoader(dataset, collate_fn=collator, **dataloader_kwargs)
