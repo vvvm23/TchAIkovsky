@@ -89,6 +89,11 @@ def main(args):
     key = jax.random.PRNGKey(args.seed)
     logger.info(f"Using PRNG key {args.seed}")
 
+    if args.micro_batch_size is None:
+        args.micro_batch_size = args.batch_size
+
+    assert args.batch_size % args.micro_batch_size == 0
+
     model_key, key = jax.random.split(key)
     logger.info("Initialising model.")
     model = TchAIkovskyModel(
@@ -131,7 +136,7 @@ def main(args):
 
     train_loader = get_dataloader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=args.micro_batch_size,
         shuffle=True,
         num_workers=args.num_workers,
         pin_memory=False,
@@ -140,21 +145,20 @@ def main(args):
 
     val_loader = get_dataloader(
         val_dataset,
-        batch_size=args.batch_size,
+        batch_size=args.micro_batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=False,
         drop_last=True,
     )
 
-    # TODO: add weight decay per parameter https://github.com/patrick-kidger/equinox/issues/79#issuecomment-1117055584
     logger.info("Initialising optimiser.")
     # optimiser = optax.adamw(learning_rate=args.learning_rate)
     lr = args.learning_rate
     if args.use_lr_scheduler:
-        WARMUP_START_LR = 1e-9
+        WARMUP_START_LR = 1e-7
         logger.info("Using learning rate scheduler")
-        steps = args.epochs * len(train_loader)
+        steps = args.epochs * len(train_dataset) // args.batch_size
         warmup_steps = int(steps * args.warmup_proportion)
         logger.info(f"{WARMUP_START_LR} -> {lr} (for {warmup_steps:,} steps)")
         logger.info(
@@ -185,7 +189,7 @@ def main(args):
     )
     where_decay_weight = lambda m: tuple(
         p.weight
-        for p in jax.tree_leaves(m, is_leaf=is_decay_weight)
+        for p in jax.tree_util.tree_leaves(m, is_leaf=is_decay_weight)
         if is_decay_weight(p)
     )
     decay_spec = eqx.tree_at(
@@ -203,13 +207,16 @@ def main(args):
             decay_spec,
         ),
     )
+
+    # TODO: fix bug when adding multi step
+    # optimiser = optax.MultiSteps(optimiser, args.batch_size // args.micro_batch_size)
     train_step, eval_step, opt_state = create_train_step(model, optimiser)
 
     ckptr = ocp.AsyncCheckpointer(ocp.StandardCheckpointHandler())
     checkpoint_root = Path("checkpoints")
     exp_root = checkpoint_root / f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     exp_root.mkdir(parents=True)
-    logger.info("Saving checkpoints and config to {exp_root}")
+    logger.info(f"Saving checkpoints and config to {exp_root}")
 
     with open(exp_root / "config.json", "w") as f:
         json.dump(vars(args), f, indent=4)
@@ -294,14 +301,15 @@ if __name__ == "__main__":
     parser.add_argument("--end_learning_rate", type=float, default=1e-6)
     parser.add_argument("--warmup_proportion", type=float, default=0.05)
     parser.add_argument("--global_norm", type=float, default=1.0)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--weight_decay", type=float, default=0.1)
+    parser.add_argument("--batch_size", type=int, default=64)
 
     parser.add_argument("--subset_proportion", type=float, default=1.0)
     parser.add_argument("--val_proportion", type=float, default=0.1)
     parser.add_argument("--max_sequence_length", type=int, default=1024)
     parser.add_argument("--min_sequence_length", type=int, default=128)
+    parser.add_argument("--micro_batch_size", type=int, default=None)
 
-    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=5)
 
