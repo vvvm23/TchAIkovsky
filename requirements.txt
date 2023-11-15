@@ -1,5 +1,6 @@
-jax==0.4.20
 equinox==0.11.1
+jax==0.4.20
+loguru==0.7.2
 miditok==2.1.7
 optax==0.1.7
 orbax-checkpoint==0.4.2
