@@ -146,7 +146,7 @@ class MultiheadAttention(Module):
         use_output_bias: bool = False,
         dropout_p: float = 0.0,
         inference: bool = False,
-        dtype: jnp.dtype = jnp.float32, # softmax is always fixed to f32
+        dtype: jnp.dtype = jnp.float32,  # softmax is always fixed to f32
         *,
         key: PRNGKeyArray,
         **kwargs,

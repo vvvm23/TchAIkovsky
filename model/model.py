@@ -24,7 +24,7 @@ class DecoderLayer(eqx.Module):
         mult: int = 4,
         head_dim: Optional[int] = None,
         dropout: float = 0.0,
-        dtype: jnp.dtype = jnp.float32
+        dtype: jnp.dtype = jnp.float32,
     ):
         self.dtype = dtype
         attn_key, fc_key = jax.random.split(key)
@@ -40,7 +40,7 @@ class DecoderLayer(eqx.Module):
             use_output_bias=True,
             dropout_p=dropout,
             key=attn_key,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
         self.norm1 = eqx.nn.LayerNorm(dim)
 
@@ -85,7 +85,9 @@ class Decoder(eqx.Module):
         keys = jax.random.split(key, num_layers)
 
         self.layers = [
-            DecoderLayer(k, dim, num_heads, head_dim=head_dim, dropout=dropout, dtype=dtype)
+            DecoderLayer(
+                k, dim, num_heads, head_dim=head_dim, dropout=dropout, dtype=dtype
+            )
             for k in keys
         ]
 
@@ -132,7 +134,13 @@ class TchAIkovskyModel(eqx.Module):
         )
 
         self.decoder = Decoder(
-            decoder_key, dim, num_heads, num_layers, head_dim=head_dim, dropout=dropout, dtype=dtype
+            decoder_key,
+            dim,
+            num_heads,
+            num_layers,
+            head_dim=head_dim,
+            dropout=dropout,
+            dtype=dtype,
         )
 
         self.norm_out = eqx.nn.LayerNorm(dim)
@@ -140,14 +148,16 @@ class TchAIkovskyModel(eqx.Module):
 
     def __call__(self, input_ids, position_ids, mask, key=None):
         causal_mask = make_causal_mask(input_ids)[0]
-        mask = jnp.where(~mask, 0, causal_mask)
+        mask = jnp.where(
+            ~mask, 0, causal_mask
+        )  # TODO: avoid ~ by reversing last two args?
 
         x = jax.vmap(self.id_embeddings)(input_ids) + jax.vmap(self.pos_embeddings)(
             position_ids
         )
         x = self.decoder(x, mask, key)
 
-        x = x.astype(self.dtype) # TODO: check if needed
+        x = x.astype(self.dtype)  # TODO: check if needed
         x = jax.vmap(self.norm_out)(x)
         logits = jax.vmap(self.out_head)(x)
         logits = logits.astype(self.output_dtype)

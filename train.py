@@ -19,6 +19,8 @@ from model import TchAIkovskyModel
 def prepare_batch(batch, key=None):
     input_ids = jnp.copy(batch["input_ids"][:, :-1])
     labels = jnp.copy(batch["input_ids"][:, 1:])
+
+    labels = jnp.where(labels == 0, -100, labels)
     position_ids = jnp.expand_dims(jnp.arange(labels.shape[-1]), 0).repeat(
         labels.shape[0], 0
     )
@@ -33,11 +35,15 @@ def loss_fn(model, batch, labels, keys=None):
         logits = jax.vmap(model)(**batch)
     else:
         logits = jax.vmap(model)(**batch, key=keys)
-    accuracy = (jnp.argmax(logits, axis=-1) == labels).mean()
-    return (
-        optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean(),
-        accuracy,
-    )
+
+    num_tokens = (labels != -100).sum()
+    accuracy = jnp.argmax(logits, axis=-1) == labels
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+
+    accuracy = jnp.where(labels == -100, 0, accuracy).sum() / num_tokens
+    loss = jnp.where(labels == -100, 0, loss).sum() / num_tokens
+
+    return loss, accuracy
 
 
 def create_train_step(model, optimiser):

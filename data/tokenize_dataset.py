@@ -3,8 +3,7 @@
 import shutil
 from pathlib import Path
 
-from .tokenizer import (get_pretrained_tokenizer, get_tokenizer,
-                        get_tokenizer_config)
+from .tokenizer import get_pretrained_tokenizer, get_tokenizer, get_tokenizer_config
 
 # TODO: later, load a config to specify options
 # for now, we hard-code
