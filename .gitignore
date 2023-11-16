@@ -164,3 +164,4 @@ cython_debug/
 wandb/
 checkpoints
 generated_midis/
+*.bak

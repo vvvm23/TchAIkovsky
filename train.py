@@ -116,6 +116,7 @@ def main(args):
 
     logger.info("Initialising dataset.")
     dataset = get_dataset(
+        dataset_root=args.dataset,
         min_sequence_length=args.min_sequence_length,
         max_sequence_length=args.max_sequence_length,
         subset=args.subset_proportion,
@@ -291,6 +292,8 @@ if __name__ == "__main__":
 
     parser.add_argument("--use_bf16", action="store_true")
     parser.add_argument("--wandb", action="store_true")
+
+    parser.add_argument("--dataset", type=str, default="tokenized_dataset")
     args = parser.parse_args()
 
     main(args)

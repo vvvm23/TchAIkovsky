@@ -6,17 +6,10 @@ from miditok.pytorch_data.collators import DataCollator
 from miditok.pytorch_data.datasets import DatasetTok
 
 
-def get_dataset(min_sequence_length=128, max_sequence_length=1024, subset: float = 1.0):
-    # TODO: need to process this into smaller chunks (of about 1024, suppose)
-    # whilst keeping each chunk valid
-    # TODO: remove any extra columns
-    # TODO: also return position ids and mask, but that can potentially be done elsewhere
-    # see https://huggingface.co/docs/datasets/v1.2.0/processing.html#augmenting-the-dataset
-    # ds = load_dataset("json", data_files="tokenized_dataset/merged.json")
-    # ds = ds.set_format('pt')
-    # ds = ds.remove_columns("ids_bpe_encoded")
-    # return ds
-    files = list(Path("tokenized_dataset").glob("**/*.json"))
+def get_dataset(
+    dataset_root: str = "tokenized_dataset", min_sequence_length=128, max_sequence_length=1024, subset: float = 1.0
+):
+    files = list(Path(dataset_root).glob("**/*.json"))
     files = files[: int(len(files) * subset)]
     ds = DatasetTok(
         files,
