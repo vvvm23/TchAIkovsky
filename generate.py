@@ -57,7 +57,11 @@ def main(args):
     logger.info(f"Using PRNG key {args.seed}")
     seed_others(args.seed)
 
+    logger.info("Loading config.")
     config = load_config(args.config)
+
+    logger.info(f"Loading tokenizer from '{args.tokenizer}'")
+    tokenizer = get_pretrained_tokenizer(args.tokenizer)
 
     logger.info("Initialising model.")
     model = TchAIkovskyModel(
@@ -79,8 +83,14 @@ def main(args):
         )
     else:
         logger.info(f"Loading model from '{args.checkpoint}'")
-        checkpointer = ocp.PyTreeCheckpointer()
-        model = checkpointer.restore(args.checkpoint, item=model)
+        checkpointer = ocp.Checkpointer(ocp.StandardCheckpointHandler())
+        # model = checkpointer.restore(Path(args.checkpoint).resolve(), item=eqx.filter(model, eqx.is_inexact_array))
+        model = checkpointer.restore(Path(args.checkpoint).resolve(), item=eqx.filter([model], eqx.is_inexact_array))[0]
+        logger.info("Model loaded!")
+        num_parameters = jax.tree_util.tree_reduce(
+            lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0
+        )
+        logger.info(f"Model has {num_parameters:,} parameters.")
 
 
 def validate_args(args):
