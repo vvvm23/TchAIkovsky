@@ -163,3 +163,4 @@ cython_debug/
 **/*.json
 wandb/
 checkpoints
+generated_midis/
