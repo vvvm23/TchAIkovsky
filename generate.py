@@ -31,7 +31,8 @@ def load_config(config_path):
 @eqx.debug.assert_max_traces(max_traces=1)
 def generate_step(model, inputs, length, key, temperature):
     logits = model(**inputs)
-    logits = jnp.take(logits, length, axis=0)
+    logits = jnp.take(logits, length - 1, axis=0)
+    # logits = logits.at[0].set(-jnp.inf)
     if temperature == 0:
         # argmax sampling
         raise NotImplementedError()
@@ -41,10 +42,20 @@ def generate_step(model, inputs, length, key, temperature):
 
 
 def generate_loop(
-    model, initial_input, temperature, key, max_to_generate: Optional[int] = None, model_max_positions: int = 1024
+    model,
+    initial_input,
+    temperature,
+    key,
+    max_to_generate: Optional[int] = None,
+    model_max_positions: int = 1024,
+    output_generated_only: bool = False,
 ) -> np.array:
     real_length = initial_input.shape[0]  # TODO: rename this variable (sample_idx?)
-    output = initial_input.tolist()
+
+    if output_generated_only:
+        output = []
+    else:
+        output = initial_input.tolist()
 
     if max_to_generate is None:
         DEFAULT_MAX = 1000
@@ -138,9 +149,11 @@ def main(args):
             Path(args.checkpoint).resolve(), item=eqx.filter([model], eqx.is_inexact_array)
         )[0]
 
-        import ipdb
+        # hack to deal with optax not serialising some parameters
+        # TODO: change to use eqx serialisation
+        model = jax.tree_map(lambda x, y: x if (y is None) else y, model, loaded_model)
+        del loaded_model
 
-        ipdb.set_trace()
         logger.info("Model loaded!")
 
     num_parameters = jax.tree_util.tree_reduce(lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0)
@@ -159,7 +172,9 @@ def main(args):
     start_tokens = np.array(tokenize_prompt(midi, tokenizer))[0]
     logger.info(f"Tokenised prompt is of length {start_tokens.shape[0]}")
 
-    start_tokens = start_tokens[:20]
+    if args.prompt_midi_slice is not None:
+        logger.info(f"Slicing starting prompt to {args.prompt_midi_slice} tokens")
+        start_tokens = start_tokens[: args.prompt_midi_slice]
 
     if start_tokens.shape[0] >= config.max_sequence_length:
         logger.warning("Tokenised prompt provided is longer than maximum length supported by model.")
@@ -174,8 +189,10 @@ def main(args):
         key,
         max_to_generate=args.max_to_generate,
         model_max_positions=config.max_sequence_length - 1,
+        output_generated_only=args.output_generated_only,
     )
 
+    logger.info(f"Generated MIDI has {len(generated_tokens)} tokens.")
     logger.info("Decoding generated MIDI")
     generated_midi = tokenizer(np.expand_dims(generated_tokens, axis=0))
 
@@ -207,11 +224,13 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--prompt_mode", type=str, default="file")
     parser.add_argument("--prompt_midi", type=str, default=None)
+    parser.add_argument("--prompt_midi_slice", type=int, default=None)
     parser.add_argument("--prompt_chord", type=str, default=None)
     parser.add_argument("--tokenizer", type=str, default="tokenizer.json")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--max_to_generate", type=int, default=None)
     parser.add_argument("--output_file", type=str, default=None)
+    parser.add_argument("--output_generated_only", action="store_true")
     args = parser.parse_args()
     validate_args(args)
     main(args)
