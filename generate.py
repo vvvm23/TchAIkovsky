@@ -3,6 +3,7 @@ from argparse import ArgumentParser
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 
 import equinox as eqx
 import jax
@@ -26,12 +27,55 @@ def load_config(config_path):
     return SimpleNamespace(**json_dict)
 
 
-def generate_step(model, inputs, key, temperature):
-    pass
+@eqx.filter_jit
+@eqx.debug.assert_max_traces(max_traces=1)
+def generate_step(model, inputs, length, key, temperature):
+    logits = model(**inputs)
+    logits = jnp.take(logits, length, axis=0)
+    if temperature == 0:
+        # argmax sampling
+        raise NotImplementedError()
+
+    logits = logits / temperature
+    return jax.random.categorical(key, logits, axis=-1)
 
 
-def generate_loop(model, initial_input, temperature, max_to_generate, key):
-    return initial_input
+def generate_loop(
+    model, initial_input, temperature, key, max_to_generate: Optional[int] = None, model_max_positions: int = 1024
+) -> np.array:
+    real_length = initial_input.shape[0]  # TODO: rename this variable (sample_idx?)
+    output = initial_input.tolist()
+
+    if max_to_generate is None:
+        DEFAULT_MAX = 1000
+        max_to_generate = DEFAULT_MAX
+
+    input_length = real_length + max_to_generate
+    if input_length > model_max_positions - 1:
+        input_length = model_max_positions - 1
+
+    position_ids = np.arange(input_length)
+    mask = np.concatenate(
+        [np.ones((real_length,), dtype=bool), np.zeros((input_length - real_length,), dtype=bool)], axis=-1, dtype=bool
+    )
+    input_ids = np.pad(initial_input, ((0, input_length - real_length),))
+
+    # TODO: replace with jax loop for faster generation
+    for _ in tqdm.trange(max_to_generate):
+        key, subkey = jax.random.split(key)
+        inputs = dict(input_ids=input_ids, position_ids=position_ids, mask=mask)
+        token = generate_step(model, inputs, np.array(real_length), subkey, temperature).item()
+        output.append(token)
+
+        if real_length < input_length:
+            input_ids[real_length] = token
+            mask[real_length] = True
+        else:
+            input_ids = np.concatenate([input_ids[1:], np.array([token])], axis=-1)
+
+        real_length = min(input_length - 1, real_length + 1)
+
+    return np.array(output)
 
 
 # tokenizes initial prompt
@@ -86,15 +130,21 @@ def main(args):
             "If you do not intend to use random weights, please specifiy --checkpoint when excecuting script."
         )
     else:
+        # TODO: this does not restore things like activation functions and such
         logger.info(f"Loading model from '{args.checkpoint}'")
         checkpointer = ocp.Checkpointer(ocp.StandardCheckpointHandler())
         # model = checkpointer.restore(Path(args.checkpoint).resolve(), item=eqx.filter(model, eqx.is_inexact_array))
-        model = checkpointer.restore(Path(args.checkpoint).resolve(), item=eqx.filter([model], eqx.is_inexact_array))[0]
+        loaded_model = checkpointer.restore(
+            Path(args.checkpoint).resolve(), item=eqx.filter([model], eqx.is_inexact_array)
+        )[0]
+
+        import ipdb
+
+        ipdb.set_trace()
         logger.info("Model loaded!")
-        num_parameters = jax.tree_util.tree_reduce(
-            lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0
-        )
-        logger.info(f"Model has {num_parameters:,} parameters.")
+
+    num_parameters = jax.tree_util.tree_reduce(lambda s, p: s + (p.size if eqx.is_inexact_array(p) else 0), model, 0)
+    logger.info(f"Model has {num_parameters:,} parameters.")
 
     if args.prompt_mode == "unconditional":
         raise NotImplementedError("Unconditional generation not implemented yet.")
@@ -106,23 +156,37 @@ def main(args):
         logger.info(midi)
 
     logger.info("Tokenising prompt.")
-    start_tokens = np.array(tokenize_prompt(midi, tokenizer))
-    logger.info(f"Tokenised prompt is of length {start_tokens.shape[1]}")
+    start_tokens = np.array(tokenize_prompt(midi, tokenizer))[0]
+    logger.info(f"Tokenised prompt is of length {start_tokens.shape[0]}")
 
-    if start_tokens.shape[1] >= config.max_sequence_length:
+    start_tokens = start_tokens[:20]
+
+    if start_tokens.shape[0] >= config.max_sequence_length:
         logger.warning("Tokenised prompt provided is longer than maximum length supported by model.")
         logger.warning("Terminating")
         return
 
-    generated_tokens = generate_loop(model, start_tokens, args.temperature, args.max_to_generate, key)
-    generated_midi = tokenizer(generated_tokens)
+    logger.info("Beginning generation loop")
+    generated_tokens = generate_loop(
+        model,
+        start_tokens,
+        args.temperature,
+        key,
+        max_to_generate=args.max_to_generate,
+        model_max_positions=config.max_sequence_length - 1,
+    )
+
+    logger.info("Decoding generated MIDI")
+    generated_midi = tokenizer(np.expand_dims(generated_tokens, axis=0))
 
     if args.output_file is None:
         output_dir = Path("generated_midis")
         output_dir.mkdir(exist_ok=True)
         args.output_file = output_dir / (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".mid")
 
+    logger.info(f"Saving generated MIDI to '{args.output_file}'")
     generated_midi.dump(args.output_file)
+    logger.info("Done")
 
 
 def validate_args(args):

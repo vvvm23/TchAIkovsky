@@ -5,8 +5,8 @@ import jax
 import jax.numpy as jnp
 from jax.random import PRNGKey
 
-from .utils import make_attention_mask, make_causal_mask
 from .attention import MultiheadAttention
+from .utils import make_attention_mask, make_causal_mask
 
 
 class DecoderLayer(eqx.Module):
@@ -57,14 +57,9 @@ class DecoderLayer(eqx.Module):
     def __call__(self, x, mask, key=None):
         x = x.astype(self.dtype)
         attn_norm = jax.vmap(self.norm1)(x)
-        assert attn_norm.dtype == jnp.bfloat16
 
-        attn_output = self.attn(
-            attn_norm, attn_norm, attn_norm, mask, key=key, inference=key is None
-        )
-        assert attn_output.dtype == jnp.bfloat16
+        attn_output = self.attn(attn_norm, attn_norm, attn_norm, mask, key=key, inference=key is None)
         fc_output = jax.vmap(self.fc)(jax.vmap(self.norm2)(x))
-        assert fc_output.dtype == jnp.bfloat16
 
         return x + attn_output + fc_output
 
@@ -84,12 +79,7 @@ class Decoder(eqx.Module):
     ):
         keys = jax.random.split(key, num_layers)
 
-        self.layers = [
-            DecoderLayer(
-                k, dim, num_heads, head_dim=head_dim, dropout=dropout, dtype=dtype
-            )
-            for k in keys
-        ]
+        self.layers = [DecoderLayer(k, dim, num_heads, head_dim=head_dim, dropout=dropout, dtype=dtype) for k in keys]
 
     def __call__(self, x, mask, key=None):
         for layer in self.layers:
@@ -124,14 +114,10 @@ class TchAIkovskyModel(eqx.Module):
     ):
         self.dtype = dtype
         self.output_dtype = output_dtype
-        id_embeddings_key, pos_embeddings_key, decoder_key, out_key = jax.random.split(
-            key, 4
-        )
+        id_embeddings_key, pos_embeddings_key, decoder_key, out_key = jax.random.split(key, 4)
 
         self.id_embeddings = eqx.nn.Embedding(vocab_size, dim, key=id_embeddings_key)
-        self.pos_embeddings = eqx.nn.Embedding(
-            max_positions, dim, key=pos_embeddings_key
-        )
+        self.pos_embeddings = eqx.nn.Embedding(max_positions, dim, key=pos_embeddings_key)
 
         self.decoder = Decoder(
             decoder_key,
@@ -148,13 +134,9 @@ class TchAIkovskyModel(eqx.Module):
 
     def __call__(self, input_ids, position_ids, mask, key=None):
         causal_mask = make_causal_mask(input_ids)[0]
-        mask = jnp.where(
-            ~mask, 0, causal_mask
-        )  # TODO: avoid ~ by reversing last two args?
+        mask = jnp.where(~mask, 0, causal_mask)  # TODO: avoid ~ by reversing last two args?
 
-        x = jax.vmap(self.id_embeddings)(input_ids) + jax.vmap(self.pos_embeddings)(
-            position_ids
-        )
+        x = jax.vmap(self.id_embeddings)(input_ids) + jax.vmap(self.pos_embeddings)(position_ids)
         x = self.decoder(x, mask, key)
 
         x = x.astype(self.dtype)  # TODO: check if needed
