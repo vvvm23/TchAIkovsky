@@ -41,13 +41,50 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--midis_dir", type=str, default="/home/alex/datasets/GiantMIDI-PIano/midis")
-    parser.add_argument("--out_dir", type=str, default="tokenized_dataset")
-    parser.add_argument("--out_tokenizer", type=str, default="tokenizer.json")
-    parser.add_argument("--vocab_size", type=int, default=10_000)
-    parser.add_argument("--num_velocities", type=int, default=16)
-    parser.add_argument("--use_chords", action="store_true")
-    parser.add_argument("--use_tempos", action="store_true")
-    parser.add_argument("--use_sustain_pedal", action="store_true")
+    parser.add_argument(
+        "--midis_dir",
+        type=str,
+        default="/home/alex/datasets/GiantMIDI-PIano/midis",
+        help="Path to directory containing MIDI files.",
+    )
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        default="tokenized_dataset",
+        help="Output directory for BPE tokenized MIDI files.",
+    )
+    parser.add_argument(
+        "--out_tokenizer",
+        type=str,
+        default="tokenizer.json",
+        help="Output path of trained BPE tokenizer.",
+    )
+    parser.add_argument(
+        "--vocab_size",
+        type=int,
+        default=10_000,
+        help="Vocabulary size of trained tokenizer.",
+    )
+    parser.add_argument(
+        "--num_velocities",
+        type=int,
+        default=16,
+        help="Number of discrete velocity (volume) bins to use in tokenizer.",
+    )
+    parser.add_argument(
+        "--use_chords",
+        action="store_true",
+        help="If present, enable chord tokens in the tokenizer.",
+    )
+    parser.add_argument(
+        "--use_tempos",
+        action="store_true",
+        help="If present, enable tempo tokens in the tokenizer.",
+    )
+    parser.add_argument(
+        "--use_sustain_pedal",
+        action="store_true",
+        help="If present, enable sustain pedal tokens in the tokenizer.",
+    )
     args = parser.parse_args()
     main(args)

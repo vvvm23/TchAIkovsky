@@ -51,6 +51,8 @@ def create_train_step(model, optimiser):
     # @eqx.debug.assert_max_traces(max_traces=1)
     @eqx.filter_jit
     def train_step(model, opt_state, batch, key):
+        # TODO: some of these arguments are different between first and second step
+        # need to investigate to avoid a double read compile.
         batch, labels, keys = prepare_batch(batch, key)
         (loss, _), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(model, batch, labels, keys)
 
@@ -266,34 +268,131 @@ def main(args):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--seed", type=int, default=0xFF)
-    parser.add_argument("--dim", type=int, default=512)
-    parser.add_argument("--heads", type=int, default=8)
-    parser.add_argument("--num_layers", type=int, default=8)
-    parser.add_argument("--vocab_size", type=int, default=10_000)
-    parser.add_argument("--head_dim", type=int, default=64)
-    parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--use_lr_scheduler", action="store_true")
-    parser.add_argument("--learning_rate", type=float, default=4e-4)
-    parser.add_argument("--end_learning_rate", type=float, default=1e-6)
-    parser.add_argument("--warmup_proportion", type=float, default=0.05)
-    parser.add_argument("--global_norm", type=float, default=1.0)
-    parser.add_argument("--weight_decay", type=float, default=0.1)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0xFF,
+        help="Random seed used for PRNG key initialisation.",
+    )
+    parser.add_argument("--dim", type=int, default=512, help="Transformer model dimension.")
+    parser.add_argument(
+        "--heads",
+        type=int,
+        default=8,
+        help="Number of attention heads in transformer model.",
+    )
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        default=8,
+        help="Number of layers in transformer model.",
+    )
+    parser.add_argument(
+        "--vocab_size",
+        type=int,
+        default=10_000,
+        help="Size of the vocabulary in input ids embedding layer.",
+    )
+    parser.add_argument("--head_dim", type=int, default=64, help="Dimension of each attention head.")
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.1,
+        help="Dropout probability in transformer model.",
+    )
+    parser.add_argument(
+        "--use_lr_scheduler",
+        action="store_true",
+        help="If present, use linear learning rate scheduler with warmup.",
+    )
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=4e-4,
+        help="Starting learning rate after warmup.",
+    )
+    parser.add_argument(
+        "--end_learning_rate",
+        type=float,
+        default=1e-6,
+        help="Ending learning rate at end of schedule.",
+    )
+    parser.add_argument(
+        "--warmup_proportion",
+        type=float,
+        default=0.05,
+        help="Determine proportion of total steps to use as warmup phase in learning rate scheduler.",
+    )
+    parser.add_argument("--global_norm", type=float, default=1.0, help="Value to clip gradient norm to.")
+    parser.add_argument(
+        "--weight_decay",
+        type=float,
+        default=0.1,
+        help="Weight decay factor in Adam optimiser.",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=64,
+        help="Effective batch size. Note, this is different to micro batch size which is the actual number of elements given to the model at once during training.",
+    )
 
-    parser.add_argument("--subset_proportion", type=float, default=1.0)
-    parser.add_argument("--val_proportion", type=float, default=0.1)
-    parser.add_argument("--max_sequence_length", type=int, default=1024)
-    parser.add_argument("--min_sequence_length", type=int, default=128)
-    parser.add_argument("--micro_batch_size", type=int, default=None)
+    parser.add_argument(
+        "--subset_proportion",
+        type=float,
+        default=1.0,
+        help="Specifies what subset of the full dataset to use for training / evaluation. Useful for debugging by using a smaller dataset.",
+    )
+    parser.add_argument(
+        "--val_proportion",
+        type=float,
+        default=0.1,
+        help="What proportion of the dataset to reserve for validation.",
+    )
+    parser.add_argument(
+        "--max_sequence_length",
+        type=int,
+        default=1024,
+        help="Maximum possible sequence length.",
+    )
+    parser.add_argument(
+        "--min_sequence_length",
+        type=int,
+        default=128,
+        help="Minimum sequence length. Tokenized MIDI sequences shorter than this are dropped.",
+    )
+    parser.add_argument(
+        "--micro_batch_size",
+        type=int,
+        default=None,
+        help="Number of samples given to the model at once during training. batch_size / micro_batch_size determines the gradient accumulation factor.",
+    )
 
-    parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--num_workers", type=int, default=8, help="Number of dataloader CPU workers.")
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=5,
+        help="Number of epochs to train for. Implicitly sets number of steps in learning rate scheduler to be epochs*len(train_dataset) // batch_size",
+    )
 
-    parser.add_argument("--use_bf16", action="store_true")
-    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument(
+        "--use_bf16",
+        action="store_true",
+        help="If present, cast model parameters to bf16 and do some computation in bf16.",
+    )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="If present, track the experiment with wandb.",
+    )
 
-    parser.add_argument("--dataset", type=str, default="tokenized_dataset")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="tokenized_dataset",
+        help="Directory containing the BPE tokenized MIDI files.",
+    )
     args = parser.parse_args()
 
     main(args)
