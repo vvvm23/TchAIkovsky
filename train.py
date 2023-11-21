@@ -9,6 +9,8 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 import tqdm
+from jax.experimental import mesh_utils
+from jax.sharding import PositionalSharding
 from loguru import logger
 
 import wandb
@@ -80,7 +82,14 @@ def wandb_init(args):
     )
 
 
-PRINT_INTERVAL = 10
+def setup_sharding(args):
+    devices = mesh_utils.create_device_mesh((len(jax.devices()),))
+    logger.info(devices)
+    sharding = PositionalSharding(devices)
+    return sharding, len(devices)
+
+
+PRINT_INTERVAL = 4
 
 
 def main(args):
@@ -88,6 +97,8 @@ def main(args):
     key = jax.random.PRNGKey(args.seed)
     seed_others(args.seed)
     logger.info(f"Using PRNG key {args.seed}")
+
+    sharding, num_devices = setup_sharding(args)
 
     if args.micro_batch_size is None:
         args.micro_batch_size = args.batch_size
@@ -215,6 +226,8 @@ def main(args):
             for i, batch in enumerate(pb):
                 key, subkey = jax.random.split(key)
                 batch = {k: v.numpy() for k, v in batch.items()}
+                batch = jax.device_put(batch, sharding.reshape(num_devices, 1))
+
                 model, opt_state, loss = train_step(model, opt_state, batch, subkey)
 
                 num_steps += 1
@@ -233,6 +246,7 @@ def main(args):
             total_val_accuracy = 0.0
             for i, batch in enumerate(pb):
                 batch = {k: v.numpy() for k, v in batch.items()}
+                batch = jax.device_put(batch, sharding.reshape(num_devices, 1))
                 loss, accuracy = eval_step(model, batch)
 
                 total_val_loss += loss.item()
