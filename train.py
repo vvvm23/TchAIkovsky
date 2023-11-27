@@ -54,7 +54,7 @@ def create_train_step(model, optimiser):
     @eqx.filter_jit
     def train_step(model, opt_state, batch, key):
         # TODO: some of these arguments are different between first and second step
-        # need to investigate to avoid a double read compile.
+        # need to investigate to avoid a double compile.
         batch, labels, keys = prepare_batch(batch, key)
         (loss, _), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(model, batch, labels, keys)
 

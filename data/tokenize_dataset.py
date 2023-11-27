@@ -7,8 +7,6 @@ from pathlib import Path
 from .tokenizer import get_pretrained_tokenizer, get_tokenizer, get_tokenizer_config
 
 
-# TODO: later, load a config to specify options
-# for now, we hard-code
 def main(args):
     tokenizer_config = get_tokenizer_config(
         num_velocities=args.num_velocities,
@@ -24,9 +22,10 @@ def main(args):
     data_augmentation_offsets = [2, 1, 1]
     no_bpe_out_dir = args.out_dir + "_no_bpe"
 
+    tokenizer.tokenize_midi_dataset(midi_paths, no_bpe_out_dir, save_programs=False)
+
     # TODO: add back data augmentation, currently crashes without it
     # likely due to version mismatch
-    tokenizer.tokenize_midi_dataset(midi_paths, no_bpe_out_dir, save_programs=False)
     # tokenizer.tokenize_midi_dataset(midi_paths, "tokenized_dataset_no_bpe", data_augment_offsets=data_augmentation_offsets, save_programs=False)
 
     tokenizer.learn_bpe(

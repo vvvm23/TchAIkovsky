@@ -32,10 +32,10 @@ def load_config(config_path):
 def generate_step(model, inputs, length, key, temperature):
     logits = model(**inputs)
     logits = jnp.take(logits, length - 1, axis=0)
-    # logits = logits.at[0].set(-jnp.inf)
-    if temperature == 0:
+
+    if temperature == 0.0:
         # argmax sampling
-        raise NotImplementedError()
+        return jnp.argmax(logits, axis=-1)
 
     logits = logits / temperature
     return jax.random.categorical(key, logits, axis=-1)
@@ -50,7 +50,7 @@ def generate_loop(
     model_max_positions: int = 1024,
     output_generated_only: bool = False,
 ) -> np.array:
-    real_length = initial_input.shape[0]  # TODO: rename this variable (sample_idx?)
+    sample_idx = initial_input.shape[0]
 
     if output_generated_only:
         output = []
@@ -61,35 +61,35 @@ def generate_loop(
         DEFAULT_MAX = 1000
         max_to_generate = DEFAULT_MAX
 
-    input_length = real_length + max_to_generate
+    input_length = sample_idx + max_to_generate
     if input_length > model_max_positions - 1:
         input_length = model_max_positions - 1
 
     position_ids = np.arange(input_length)
     mask = np.concatenate(
         [
-            np.ones((real_length,), dtype=bool),
-            np.zeros((input_length - real_length,), dtype=bool),
+            np.ones((sample_idx,), dtype=bool),
+            np.zeros((input_length - sample_idx,), dtype=bool),
         ],
         axis=-1,
         dtype=bool,
     )
-    input_ids = np.pad(initial_input, ((0, input_length - real_length),))
+    input_ids = np.pad(initial_input, ((0, input_length - sample_idx),))
 
-    # TODO: replace with jax loop for faster generation
+    # TODO: maybe replace with jax.lax.scan loop for faster generation
     for _ in tqdm.trange(max_to_generate):
         key, subkey = jax.random.split(key)
         inputs = dict(input_ids=input_ids, position_ids=position_ids, mask=mask)
-        token = generate_step(model, inputs, np.array(real_length), subkey, temperature).item()
+        token = generate_step(model, inputs, np.array(sample_idx), subkey, temperature).item()
         output.append(token)
 
-        if real_length < input_length:
-            input_ids[real_length] = token
-            mask[real_length] = True
+        if sample_idx < input_length:
+            input_ids[sample_idx] = token
+            mask[sample_idx] = True
         else:
             input_ids = np.concatenate([input_ids[1:], np.array([token])], axis=-1)
 
-        real_length = min(input_length - 1, real_length + 1)
+        sample_idx = min(input_length - 1, sample_idx + 1)
 
     return np.array(output)
 
@@ -97,16 +97,6 @@ def generate_loop(
 # tokenizes initial prompt
 def tokenize_prompt(midi, tokenizer):
     return tokenizer(midi)
-
-
-# returns midi version of uncondtional prompt
-def unconditional_prompt():
-    pass
-
-
-# return midi version of chord prompt
-def chord_prompt(chord):
-    pass
 
 
 # loads prompt MIDI file
@@ -146,17 +136,17 @@ def main(args):
             "If you do not intend to use random weights, please specifiy --checkpoint when excecuting script."
         )
     else:
-        # TODO: this does not restore things like activation functions and such
+        # this does not restore things like activation functions and such, so
+        # we need to use a tree map later to recover these details.
         logger.info(f"Loading model from '{args.checkpoint}'")
         checkpointer = ocp.Checkpointer(ocp.StandardCheckpointHandler())
-        # model = checkpointer.restore(Path(args.checkpoint).resolve(), item=eqx.filter(model, eqx.is_inexact_array))
         loaded_model = checkpointer.restore(
             Path(args.checkpoint).resolve(),
             item=eqx.filter([model], eqx.is_inexact_array),
         )[0]
 
-        # hack to deal with optax not serialising some parameters
-        # TODO: change to use eqx serialisation
+        # hack to deal with optax not serialising some equinox hyperparameters
+        # TODO: change to use eqx serialisation to avoid this.
         model = jax.tree_map(lambda x, y: x if (y is None) else y, model, loaded_model)
         del loaded_model
 
@@ -166,16 +156,14 @@ def main(args):
     logger.info(f"Model has {num_parameters:,} parameters.")
 
     if args.prompt_mode == "unconditional":
-        raise NotImplementedError("Unconditional generation not implemented yet.")
-    elif args.prompt_mode == "chord":
-        raise NotImplementedError("Chord-conditioned generation not implemented yet.")
+        start_tokens = np.array([1], dtype=int)  # BOS token only
     elif args.prompt_mode == "file":
         logger.info(f"Loading prompt file '{args.prompt_midi}'")
         midi = file_prompt(args.prompt_midi)
         logger.info(midi)
+        logger.info("Tokenising prompt.")
+        start_tokens = np.array(tokenize_prompt(midi, tokenizer))[0]
 
-    logger.info("Tokenising prompt.")
-    start_tokens = np.array(tokenize_prompt(midi, tokenizer))[0]
     logger.info(f"Tokenised prompt is of length {start_tokens.shape[0]}")
 
     if args.prompt_midi_slice is not None:
@@ -215,12 +203,10 @@ def main(args):
 def validate_args(args):
     if args.config is None:
         raise ValueError("Must specify --config!")
-    if args.prompt_mode not in ["unconditional", "chord", "file"]:
+    if args.prompt_mode not in ["unconditional", "file"]:
         raise ValueError(f"Invalid prompt mode 'args.prompt_mode'!")
     if args.prompt_mode == "file" and args.prompt_midi is None:
         raise ValueError("Must specify --prompt_midi if `--prompt_mode file` specified!")
-    if args.prompt_mode == "chord" and args.prompt_chord is None:
-        raise ValueError("Must specify --prompt_chord if `--prompt_mode chord` specified!")
 
 
 if __name__ == "__main__":
@@ -248,7 +234,7 @@ if __name__ == "__main__":
         "--prompt_mode",
         type=str,
         default="file",
-        help="Specifies the prompting mode. Currently just 'file' is supported.",
+        help="Specifies the prompting mode. Currently just 'file' and 'unconditional' are supported.",
     )
     parser.add_argument(
         "--prompt_midi",
@@ -261,12 +247,6 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Specifies the number of tokens to take from the start of the prompt file for use as a prompt.",
-    )
-    parser.add_argument(
-        "--prompt_chord",
-        type=str,
-        default=None,
-        help="Specifies a starting chord or chord progression.",
     )
     parser.add_argument(
         "--tokenizer",

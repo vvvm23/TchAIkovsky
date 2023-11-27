@@ -59,9 +59,22 @@ To limit the length of the generation, add the flag `--max_to_generate
 To output the generated content only (dropping the prompt) add the flag
 `--output_generated_only`.
 
+You can also use an unconditional prompt (simply the `BOS` token) by passing
+`--prompt_mode unconditional`.
+
 To see further configuration options, execute `python generate.py --help`
 
 Generated files will be saved to `generated_midis`.
+
+### How to prompt your model
+
+There are three ways I recommend prompting your model:
+- Completely unconditionally, which seems to produce decent results but lacks any control over the outputs.
+- From a simple prompt file: a MIDI file that has some basic starting elements you want in your generated piece. This could include things like tempo markings, key signatures, or even chords and chord progressions.
+    - For the chords and chord progressions, you can find a bunch of MIDIs for these [here](https://github.com/ldrolez/free-midi-chords)
+- From an existing piece, in which case the model will attempt to continue the
+  piece (either from the end or from a slice specified by
+  `--prompt_midi_slice`). This produces the most coherent results, but is more prone to directly copying from the piece, particularly when `--prompt_midi_slice` is high relative to the context size of the model (1024 tokens). However, it can be interesting to see how a model continues a piece you are already familiar with, such as by pulling MIDI files off [Musescore](https://musescore.com). Be aware that the model only works with single program MIDI files, so if there are multiple programs these will need to be merged.
 
 ### Architecture
 

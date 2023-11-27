@@ -7,7 +7,10 @@ from miditok.pytorch_data.datasets import DatasetTok
 
 
 def get_dataset(
-    dataset_root: str = "tokenized_dataset", min_sequence_length=128, max_sequence_length=1024, subset: float = 1.0
+    dataset_root: str = "tokenized_dataset",
+    min_sequence_length=128,
+    max_sequence_length=1024,
+    subset: float = 1.0,
 ):
     files = list(Path(dataset_root).glob("**/*.json"))
     files = files[: int(len(files) * subset)]

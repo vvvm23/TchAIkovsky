@@ -3,7 +3,10 @@ from miditok import REMI, TokenizerConfig
 
 
 def get_tokenizer_config(
-    num_velocities: int = 16, use_chords: bool = False, use_tempos: bool = False, use_sustain_pedal: bool = False
+    num_velocities: int = 16,
+    use_chords: bool = False,
+    use_tempos: bool = False,
+    use_sustain_pedal: bool = False,
 ):
     return TokenizerConfig(
         nb_velocities=num_velocities,

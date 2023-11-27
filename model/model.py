@@ -134,12 +134,11 @@ class TchAIkovskyModel(eqx.Module):
 
     def __call__(self, input_ids, position_ids, mask, key=None):
         causal_mask = make_causal_mask(input_ids)[0]
-        mask = jnp.where(~mask, 0, causal_mask)  # TODO: avoid ~ by reversing last two args?
+        mask = jnp.where(mask, causal_mask, 0)
 
         x = jax.vmap(self.id_embeddings)(input_ids) + jax.vmap(self.pos_embeddings)(position_ids)
         x = self.decoder(x, mask, key)
 
-        x = x.astype(self.dtype)  # TODO: check if needed
         x = jax.vmap(self.norm_out)(x)
         logits = jax.vmap(self.out_head)(x)
         logits = logits.astype(self.output_dtype)
