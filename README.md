@@ -33,7 +33,7 @@ The above script will output a tokenized dataset to `output_dir` and a BPE
 trained tokenizer to `output_tokenizer_path`
 
 To begin training with default options, run `python train.py --dataset
-<output_dir>`. See `python train.py` for other configuration options.
+<output_dir>`. See `python train.py --help` for other configuration options.
 
 During training, checkpoints will be saved to `checkpoints` along with a
 configuration file. After training, the checkpoint and configuration can be
