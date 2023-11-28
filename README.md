@@ -19,8 +19,10 @@ pip install -r requirements.txt
 Before training, we need to prepare a dataset of MIDI files. For my
 experiments, I used the [GiantMIDI dataset from Bytedance
 research](https://github.com/bytedance/GiantMIDI-Piano/blob/master/disclaimer.md).
+
 Extract this and the MIDI files held therein to a directory. Then, execute the
-following on the directory containing the extracted MIDI files:
+following on the directory containing the extracted MIDI files to tokenise the
+dataset using [MidiTok](https://github.com/Natooz/MidiTok):
 ```shell
 python -m data.tokenize_dataset \
     --midis_dir <midi_dir> \
