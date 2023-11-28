@@ -101,13 +101,14 @@ The architecture of this model is a relatively simple Transformer architecture
 using learned positional embeddings (up to 1024 positions) and parallel
 (GPTJ-style) attention blocks.
 
-This results in a relatively small model of approximately 35M parameters.
-
 ### Tokenizer
 
 The MIDI tokenizer in use is the [REMI](https://dl.acm.org/doi/10.1145/3394171.3413671) tokenizer implemented in the [MidiTok](https://github.com/Natooz/MidiTok) library.
 
-
 ### Pretrained Models
 
-`TODO: add this`
+Some pretrained checkpoints trained on the GiantMIDI dataset.
+- [101M Parameter Model, No Chord Identification in Tokenizer](https://drive.google.com/drive/folders/1RnoJFdwBQazTxQOmtTSGQpyt2ooE4x3a?usp=drive_link)
+
+GiantMIDI is a classical music, single-channel MIDI dataset. Results on out of
+distribution prompts may vary.
